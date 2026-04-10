@@ -1,0 +1,6 @@
+customtkinter
+tkinterdnd2
+openai-whisper
+torch
+deep-translator
+TTS
