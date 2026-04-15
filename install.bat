@@ -3,13 +3,26 @@ setlocal EnableExtensions
 cd /d "%~dp0"
 
 echo [1/6] Choose environment type
+echo   0^) System Python ^(no env^)
 echo   1^) Python venv ^(recommended^)
 echo   2^) Conda env
-set /p ENV_MODE=Select 1 or 2 [default 1]: 
+set /p ENV_MODE=Select 0, 1 or 2 [default 1]: 
 if not defined ENV_MODE set "ENV_MODE=1"
 
 if "%ENV_MODE%"=="2" goto conda_mode
+if "%ENV_MODE%"=="0" goto system_mode
 goto venv_mode
+
+:system_mode
+echo [2/6] Using system Python...
+set "PY_EXE=python"
+"%PY_EXE%" -c "import sys; print(sys.version)"
+if errorlevel 1 (
+  echo ERROR: System Python not found in PATH.
+  goto fail
+)
+set "START_MODE=SYSTEM"
+goto install_requirements
 
 :venv_mode
 echo [2/6] Find compatible Python...

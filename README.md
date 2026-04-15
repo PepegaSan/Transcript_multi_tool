@@ -29,7 +29,8 @@ python transcript.py
 Windows quick setup:
 
 - Run `install.bat`
-  - choose mode: `Python venv` or `Conda env`
+  - choose mode: `System Python`, `Python venv`, or `Conda env`
+  - `System Python`: no virtual environment, installs directly into current Python
   - `Python venv`: picks highest compatible Python automatically (3.11 -> 3.10 -> 3.9)
   - `Conda env`: shows available conda envs; you can select one or create a new one
   - stores your choice for `start_gui.bat`
