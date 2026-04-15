@@ -7,6 +7,7 @@ import json
 import tempfile
 import shutil
 import sys
+import importlib.util
 import customtkinter as ctk
 from tkinter import filedialog, messagebox
 from tkinterdnd2 import TkinterDnD, DND_FILES
@@ -133,6 +134,21 @@ class TranskriptionApp(DnD_CTk):
         self.tts_active_process = None
         self.ui_settings_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ui_settings.json")
         self.ui_settings = self._load_ui_settings()
+        saved_ui_lang = str(self.ui_settings.get("ui_language", "EN")).strip().upper()
+        if saved_ui_lang not in {"EN", "DE"}:
+            saved_ui_lang = "EN"
+        self.ui_lang_var = ctk.StringVar(value=saved_ui_lang)
+
+        self.top_controls = ctk.CTkFrame(self, fg_color="transparent")
+        self.top_controls.pack(fill='x', padx=20, pady=(10, 0))
+        self.language_toggle = ctk.CTkSegmentedButton(
+            self.top_controls,
+            values=["EN", "DE"],
+            variable=self.ui_lang_var,
+            command=self.on_ui_language_changed,
+            width=120
+        )
+        self.language_toggle.pack(side='right')
 
         self.tabs = ctk.CTkTabview(self)
         self.tabs.pack(fill='both', expand=True, padx=20, pady=15)
@@ -141,13 +157,11 @@ class TranskriptionApp(DnD_CTk):
         self.tab_filter = self.tabs.add('2. Filter & Replace')
         self.tab_export = self.tabs.add('3. Editor & Text Export')
         self.tab_davinci = self.tabs.add('4. DaVinci Resolve Export')
-        self.tab_tts = self.tabs.add('5. Voice Export (TTS)')
 
         self.build_source_tab()
         self.build_filter_tab()
         self.build_export_tab()
         self.build_davinci_tab()
-        self.build_tts_tab()
         self.bind_all("<c>", self.on_copy_block_shortcut)
         self.bind_all("<C>", self.on_copy_block_shortcut)
         self.bind_all("<Control-Shift-C>", self.on_copy_block_shortcut)
@@ -157,11 +171,98 @@ class TranskriptionApp(DnD_CTk):
 
         self.frame_progress = ctk.CTkFrame(self, fg_color='transparent')
         self.frame_progress.pack(fill='x', padx=20, pady=(0, 20))
-        self.lbl_status = ctk.CTkLabel(self.frame_progress, text='Bereit', font=('Arial', 12))
+        self.lbl_status = ctk.CTkLabel(self.frame_progress, text=self._tr("Ready", "Bereit"), font=('Arial', 12))
         self.lbl_status.pack(anchor='w')
         self.progress = ctk.CTkProgressBar(self.frame_progress)
         self.progress.pack(fill='x', pady=6)
         self.progress.set(0)
+        self.apply_ui_language()
+
+    def _tr(self, en_text, de_text):
+        try:
+            return de_text if self.ui_lang_var.get() == "DE" else en_text
+        except Exception:
+            return en_text
+
+    def _is_tts_available(self):
+        try:
+            if bool(self.ui_settings.get("tts_enabled", True)) is False:
+                return False, self._tr("TTS was disabled during install.", "TTS wurde bei der Installation deaktiviert.")
+        except Exception:
+            pass
+        if sys.version_info[:2] < (3, 10) or sys.version_info[:2] > (3, 11):
+            return False, self._tr("TTS is supported on Python 3.10 or 3.11 in this setup.", "TTS wird in diesem Setup mit Python 3.10 oder 3.11 unterstuetzt.")
+        if importlib.util.find_spec("TTS") is None:
+            return False, self._tr("TTS package is not installed in this environment.", "TTS-Paket ist in dieser Umgebung nicht installiert.")
+        return True, ""
+
+    def _set_widget_state_recursive(self, widget, state):
+        try:
+            widget.configure(state=state)
+        except Exception:
+            pass
+        try:
+            for child in widget.winfo_children():
+                self._set_widget_state_recursive(child, state)
+        except Exception:
+            pass
+
+    def _apply_tts_availability(self):
+        if not hasattr(self, "tab_tts"):
+            return
+        ok, reason = self._is_tts_available()
+        if ok:
+            if hasattr(self, "lbl_tts_disabled_info"):
+                self.lbl_tts_disabled_info.configure(text="")
+            return
+        if hasattr(self, "lbl_tts_disabled_info"):
+            self.lbl_tts_disabled_info.configure(
+                text=self._tr(f"Tab 5 disabled: {reason}", f"Tab 5 deaktiviert: {reason}"),
+                text_color="orange"
+            )
+        if hasattr(self, "tts_main_frame"):
+            self._set_widget_state_recursive(self.tts_main_frame, "disabled")
+        self.lbl_status.configure(text=reason, text_color="orange")
+
+    def on_ui_language_changed(self, value):
+        lang = str(value or "EN").strip().upper()
+        if lang not in {"EN", "DE"}:
+            lang = "EN"
+        self.ui_lang_var.set(lang)
+        self.ui_settings["ui_language"] = lang
+        self._save_ui_settings()
+        self.apply_ui_language()
+
+    def apply_ui_language(self):
+        if hasattr(self, "drop_zone"):
+            self.drop_zone.configure(text=self._tr("📁 Drop video here\n(Drag & Drop)", "📁 Video hier ablegen\n(Drag & Drop)"))
+        if hasattr(self, "chk_cut"):
+            self.chk_cut.configure(
+                text=self._tr(
+                    "Capture timestamps for video export (recommended)",
+                    "Zeitstempel fuer Videoexport erfassen (empfohlen)"
+                )
+            )
+        if hasattr(self, "lbl_cut_hint"):
+            self.lbl_cut_hint.configure(
+                text=self._tr(
+                    "Keep this ON for DaVinci/FFmpeg export. OFF = text only.",
+                    "Wenn du DaVinci/FFmpeg Export nutzen willst: eingeschaltet lassen. (AUS = nur Transkript, keine Cut/Beep-Bereiche.)"
+                )
+            )
+        if hasattr(self, "lbl_whisper_model"):
+            self.lbl_whisper_model.configure(text=self._tr("Whisper model:", "Whisper Modell:"))
+        if hasattr(self, "lbl_source_language"):
+            self.lbl_source_language.configure(text=self._tr("Language:", "Sprache:"))
+        if hasattr(self, "lbl_davinci_desc"):
+            self.lbl_davinci_desc.configure(
+                text=self._tr(
+                    "Send video to DaVinci and remove words deleted in Tab 2.",
+                    "Exportiert das Video ohne die in Tab 2 geloeschten Woerter direkt nach DaVinci Resolve."
+                )
+            )
+        if hasattr(self, "lbl_status") and self.lbl_status.cget("text").strip() in {"Ready", "Bereit"}:
+            self.lbl_status.configure(text=self._tr("Ready", "Bereit"))
 
     # --- TAB 1: SOURCE ---
     def build_source_tab(self):
@@ -170,7 +271,13 @@ class TranskriptionApp(DnD_CTk):
         src = ctk.CTkFrame(src_outer, fg_color='transparent', width=980)
         src.pack(anchor='n', pady=(0, 4))
 
-        self.drop_zone = ctk.CTkLabel(src, text='📁 Video hier ablegen\n(Drag & Drop)', corner_radius=10, fg_color='#2a2d2e', font=('Arial', 14))
+        self.drop_zone = ctk.CTkLabel(
+            src,
+            text=self._tr("📁 Drop video here\n(Drag & Drop)", "📁 Video hier ablegen\n(Drag & Drop)"),
+            corner_radius=10,
+            fg_color='#2a2d2e',
+            font=('Arial', 14)
+        )
         self.drop_zone.pack(fill='x', padx=10, pady=20, ipady=40)
         self.drop_zone.drop_target_register(DND_FILES)
         self.drop_zone.dnd_bind('<<Drop>>', self.on_drop)
@@ -186,16 +293,20 @@ class TranskriptionApp(DnD_CTk):
             offvalue=0,
         )
         self.chk_cut.pack(anchor="w", padx=12, pady=(10, 2))
-        ctk.CTkLabel(
+        self.lbl_cut_hint = ctk.CTkLabel(
             cut_frame,
-            text="If you plan to use DaVinci/FFmpeg export, keep this ON. (OFF = transcript only, no cut/beep ranges.)",
+            text=self._tr(
+                "Keep this ON for DaVinci/FFmpeg export. OFF = text only.",
+                "Wenn du DaVinci/FFmpeg Export nutzen willst: eingeschaltet lassen. (AUS = nur Transkript, keine Cut/Beep-Bereiche.)"
+            ),
             text_color="gray70",
             anchor="w",
-        ).pack(fill="x", padx=12, pady=(0, 10))
+        )
+        self.lbl_cut_hint.pack(fill="x", padx=12, pady=(0, 10))
 
         ctk.CTkLabel(
             src,
-            text="Whisper note: larger models are more accurate but slower.",
+            text="Whisper note: bigger model = better text, but slower.",
             text_color="gray70",
             anchor="w"
         ).pack(fill='x', padx=10, pady=(0, 6))
@@ -203,7 +314,8 @@ class TranskriptionApp(DnD_CTk):
         options_frame = ctk.CTkFrame(src, fg_color='transparent')
         options_frame.pack(fill='x', padx=10, pady=(0, 10))
 
-        ctk.CTkLabel(options_frame, text="Whisper Modell:").pack(side='left', padx=(0, 8))
+        self.lbl_whisper_model = ctk.CTkLabel(options_frame, text=self._tr("Whisper model:", "Whisper Modell:"))
+        self.lbl_whisper_model.pack(side='left', padx=(0, 8))
         self.model_var = ctk.StringVar(value="large-v3")
         self.model_menu = ctk.CTkOptionMenu(
             options_frame,
@@ -212,7 +324,8 @@ class TranskriptionApp(DnD_CTk):
         )
         self.model_menu.pack(side='left', padx=(0, 18))
 
-        ctk.CTkLabel(options_frame, text="Sprache:").pack(side='left', padx=(0, 8))
+        self.lbl_source_language = ctk.CTkLabel(options_frame, text=self._tr("Language:", "Sprache:"))
+        self.lbl_source_language.pack(side='left', padx=(0, 8))
         self.language_var = ctk.StringVar(value="auto")
         self.language_menu = ctk.CTkOptionMenu(
             options_frame,
@@ -246,7 +359,7 @@ class TranskriptionApp(DnD_CTk):
         self.entry_chunk_char_limit.pack(side='left', padx=(0, 10))
         ctk.CTkLabel(
             chunk_frame,
-            text="Set 0 to disable a limit. Example: chars=0, words=500 uses only the word limit.",
+            text="Set 0 to disable a limit. Example: chars=0, words=500 -> word limit only.",
             text_color="gray70"
         ).pack(side='left')
 
@@ -263,7 +376,7 @@ class TranskriptionApp(DnD_CTk):
         self.chk_auto_punct.pack(side='left', padx=(0, 10))
         ctk.CTkLabel(
             punctuation_frame,
-            text="If text has almost no punctuation, add basic sentence punctuation automatically.",
+            text="If text has little punctuation, add basic punctuation automatically.",
             text_color="gray70"
         ).pack(side='left')
 
@@ -380,15 +493,24 @@ class TranskriptionApp(DnD_CTk):
             return
         self.video_path = path
         self.last_imported_clip = None
-        self.drop_zone.configure(text=f'✅ Geladen:\n{os.path.basename(path)}', fg_color='#1f538d')
+        self.drop_zone.configure(
+            text=f"{self._tr('✅ Loaded:', '✅ Geladen:')}\n{os.path.basename(path)}",
+            fg_color='#1f538d'
+        )
         ext = os.path.splitext(path)[1].lower()
         if ext in {".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg", ".opus", ".wma"}:
             self.lbl_status.configure(
-                text="Quelle geladen (nur Audio). Transkription: OK — DaVinci-Videoexport braucht z. B. mp4/mov.",
+                text=self._tr(
+                    "Source loaded (audio only). Transcription works, but DaVinci video export needs e.g. mp4/mov.",
+                    "Quelle geladen (nur Audio). Transkription: OK — DaVinci-Videoexport braucht z. B. mp4/mov."
+                ),
                 text_color="yellow",
             )
         else:
-            self.lbl_status.configure(text="Quelle geladen. Bereit zur Transkription.", text_color="white")
+            self.lbl_status.configure(
+                text=self._tr("Source loaded. Ready for transcription.", "Quelle geladen. Bereit zur Transkription."),
+                text_color="white"
+            )
         self.refresh_whisper_runtime_info()
 
     # --- TAB 2: FILTER ---
@@ -579,10 +701,18 @@ class TranskriptionApp(DnD_CTk):
         frame = ctk.CTkFrame(outer, fg_color='transparent', width=980)
         frame.pack(anchor='n', pady=(0, 4))
         
-        ctk.CTkLabel(frame, text="Exportiert das Video ohne die in Tab 2 gelöschten Wörter direkt nach DaVinci Resolve.", wraplength=400).pack(pady=10)
+        self.lbl_davinci_desc = ctk.CTkLabel(
+            frame,
+            text=self._tr(
+                "Send video to DaVinci and remove words deleted in Tab 2.",
+                "Exportiert das Video ohne die in Tab 2 geloeschten Woerter direkt nach DaVinci Resolve."
+            ),
+            wraplength=400
+        )
+        self.lbl_davinci_desc.pack(pady=10)
         ctk.CTkLabel(
             frame,
-            text="Uses the same file as Tab 1 (drag & drop). Temporary WAV from transcription is not used for Resolve.",
+            text="Uses the same file as Tab 1 (drag & drop). Temp WAV is not used in Resolve.",
             text_color="gray70",
             wraplength=420,
         ).pack(pady=(0, 6))
@@ -793,6 +923,9 @@ class TranskriptionApp(DnD_CTk):
         scroll.pack(fill='both', expand=True)
         frame = ctk.CTkFrame(scroll, fg_color='transparent', width=980)
         frame.pack(anchor='n', pady=(0, 4))
+        self.tts_main_frame = frame
+        self.lbl_tts_disabled_info = ctk.CTkLabel(frame, text="", text_color="orange", anchor="w")
+        self.lbl_tts_disabled_info.pack(fill='x', padx=10, pady=(6, 2))
 
         ctk.CTkLabel(
             frame,
@@ -825,7 +958,10 @@ class TranskriptionApp(DnD_CTk):
         runtime_frame = ctk.CTkFrame(runtime_left, fg_color='transparent')
         runtime_frame.pack(fill='x', pady=(0, 8))
         ctk.CTkLabel(runtime_frame, text="TTS runtime:").pack(side='left', padx=(0, 8))
-        self.tts_runtime_var = ctk.StringVar(value="conda_env")
+        runtime_default = str(self.ui_settings.get("tts_runtime_mode", "conda_env")).strip().lower()
+        if runtime_default not in {"conda_env", "current_python", "python_path"}:
+            runtime_default = "conda_env"
+        self.tts_runtime_var = ctk.StringVar(value=runtime_default)
         self.tts_runtime_menu = ctk.CTkOptionMenu(
             runtime_frame,
             variable=self.tts_runtime_var,
@@ -836,11 +972,17 @@ class TranskriptionApp(DnD_CTk):
         self.tts_runtime_menu.pack(side='left', padx=(0, 8))
         self.tts_env_entry = ctk.CTkEntry(runtime_frame, width=160, placeholder_text="Conda env name")
         self.tts_env_entry.pack(side='left')
+        env_default = str(self.ui_settings.get("tts_conda_env", "")).strip()
+        if env_default:
+            self.tts_env_entry.insert(0, env_default)
         python_path_frame = ctk.CTkFrame(runtime_left, fg_color='transparent')
         python_path_frame.pack(fill='x', pady=(0, 2))
         ctk.CTkLabel(python_path_frame, text="Python path (optional):").pack(side='left', padx=(0, 8))
         self.tts_py_entry = ctk.CTkEntry(python_path_frame, width=260, placeholder_text="Paste full python.exe path")
         self.tts_py_entry.pack(side='left')
+        py_default = str(self.ui_settings.get("tts_python_path", "")).strip()
+        if py_default:
+            self.tts_py_entry.insert(0, py_default)
 
         drop_wrap = ctk.CTkFrame(runtime_right, fg_color='transparent', width=280)
         drop_wrap.pack(anchor='w')
@@ -861,6 +1003,8 @@ class TranskriptionApp(DnD_CTk):
         self.btn_tts_ref_browse = ctk.CTkButton(drop_wrap, text="Browse...", command=self.browse_tts_reference, width=100)
         self.btn_tts_ref_browse.pack(anchor='center', pady=(8, 0))
         self.on_tts_runtime_changed(self.tts_runtime_var.get())
+        self.tts_env_entry.bind("<FocusOut>", lambda _e: self._save_tts_runtime_settings())
+        self.tts_py_entry.bind("<FocusOut>", lambda _e: self._save_tts_runtime_settings())
 
         ctk.CTkLabel(frame, text="Model / Profile", font=('Arial', 14, 'bold'), anchor='w').pack(fill='x', padx=10, pady=(8, 6))
         profile_frame = ctk.CTkFrame(frame, fg_color='transparent')
@@ -1159,6 +1303,19 @@ class TranskriptionApp(DnD_CTk):
         else:
             self.tts_env_entry.configure(state="disabled")
             self.tts_py_entry.configure(state="disabled")
+        self._save_tts_runtime_settings()
+
+    def _save_tts_runtime_settings(self):
+        try:
+            mode = (self.tts_runtime_var.get() or "conda_env").strip()
+            env_name = (self.tts_env_entry.get() or "").strip() if hasattr(self, "tts_env_entry") else ""
+            py_path = (self.tts_py_entry.get() or "").strip() if hasattr(self, "tts_py_entry") else ""
+            self.ui_settings["tts_runtime_mode"] = mode
+            self.ui_settings["tts_conda_env"] = env_name
+            self.ui_settings["tts_python_path"] = py_path
+            self._save_ui_settings()
+        except Exception:
+            pass
 
     def _resolve_conda_executable(self):
         # 1) Environment variable from activated shells
@@ -2147,8 +2304,14 @@ print('ok')
 
     def start_transkription(self):
         if not self.video_path:
-            self.lbl_status.configure(text='Bitte zuerst eine Video-Datei laden (Drag & Drop).', text_color='red')
-            messagebox.showwarning("Keine Quelle", "Bitte zuerst eine Video-Datei laden.")
+            self.lbl_status.configure(
+                text=self._tr("Please load a video file first (Drag & Drop).", "Bitte zuerst eine Video-Datei laden (Drag & Drop)."),
+                text_color='red'
+            )
+            messagebox.showwarning(
+                self._tr("No source", "Keine Quelle"),
+                self._tr("Please load a video file first.", "Bitte zuerst eine Video-Datei laden.")
+            )
             return
         self.transcription_cancel_requested = False
         self.btn_transcribe.configure(state='disabled')
@@ -2223,7 +2386,7 @@ print('ok')
             if selected_device == "auto":
                 device = "cuda" if torch.cuda.is_available() else "cpu"
             if device == "cuda" and not torch.cuda.is_available():
-                raise Exception("CUDA ausgewählt, aber keine CUDA-fähige GPU erkannt.")
+                raise Exception(self._tr("CUDA selected, but no CUDA-capable GPU detected.", "CUDA ausgewaehlt, aber keine CUDA-faehige GPU erkannt."))
 
             prepared_audio_path, temp_audio_path = self._prepare_audio_for_transcription(self.video_path)
             if self.transcription_cancel_requested:
@@ -2248,7 +2411,10 @@ print('ok')
                 self.after(
                     0,
                     lambda: self.lbl_status.configure(
-                        text='Transkription fertig (basic punctuation fallback applied).',
+                        text=self._tr(
+                            "Transcription finished (basic punctuation fallback applied).",
+                            "Transkription fertig (basic punctuation fallback applied)."
+                        ),
                         text_color='yellow'
                     )
                 )
@@ -2274,7 +2440,7 @@ print('ok')
             if msg.strip().lower() == "cancelled." or msg.strip().lower() == "cancelled":
                 self.after(0, lambda: self.lbl_status.configure(text="Transcription cancelled.", text_color="yellow"))
             else:
-                self.after(0, lambda m=msg: self.lbl_status.configure(text=f"Fehler: {m}"))
+                self.after(0, lambda m=msg: self.lbl_status.configure(text=f"{self._tr('Error', 'Fehler')}: {m}"))
             self.after(0, self.progress.stop)
             self.after(0, lambda: self.btn_transcribe.configure(state='normal'))
             if hasattr(self, "btn_stop_transcribe"):
@@ -2294,7 +2460,7 @@ print('ok')
         self.progress.stop()
         self.progress.configure(mode="determinate")
         self.progress.set(1)
-        self.lbl_status.configure(text='Transkription abgeschlossen.', text_color='lightgreen')
+        self.lbl_status.configure(text=self._tr('Transcription completed.', 'Transkription abgeschlossen.'), text_color='lightgreen')
         self.btn_transcribe.configure(state='normal')
         if hasattr(self, "btn_stop_transcribe"):
             self.btn_stop_transcribe.configure(state="disabled")
@@ -2993,7 +3159,7 @@ print('ok')
             save_path = filedialog.asksaveasfilename(
                 defaultextension=".txt",
                 initialfile=default_name,
-                filetypes=[("Textdatei", "*.txt")]
+                filetypes=[(self._tr("Text file", "Textdatei"), "*.txt")]
             )
             if not save_path:
                 return
@@ -3211,38 +3377,53 @@ print('ok')
     def export_text(self):
         text = self.txt_editor.get("0.0", "end").strip()
         if not text:
-            self.lbl_status.configure(text='Kein Text zum Exportieren vorhanden.', text_color='red')
-            messagebox.showwarning("Kein Inhalt", "Es gibt keinen Text zum Speichern.")
+            self.lbl_status.configure(text=self._tr('No text available for export.', 'Kein Text zum Exportieren vorhanden.'), text_color='red')
+            messagebox.showwarning(
+                self._tr("No content", "Kein Inhalt"),
+                self._tr("There is no text to save.", "Es gibt keinen Text zum Speichern.")
+            )
             return
 
-        default_name = "transcript_formatiert.txt"
+        default_name = "transcript_formatted.txt"
         if self.video_path:
             base = os.path.splitext(os.path.basename(self.video_path))[0].strip()
             if base:
-                default_name = f"{base}_transcript_formatiert.txt"
+                default_name = f"{base}_transcript_formatted.txt"
 
         pfad = filedialog.asksaveasfilename(
             defaultextension=".txt",
             initialfile=default_name,
-            filetypes=[("Textdatei", "*.txt")]
+            filetypes=[(self._tr("Text file", "Textdatei"), "*.txt")]
         )
         if pfad:
             normalized_text = text.replace('\r\n', '\n').replace('\r', '\n')
             with open(pfad, 'w', encoding='utf-8', newline='\n') as f:
                 f.write(normalized_text + "\n")
-            self.lbl_status.configure(text=f'Text erfolgreich exportiert: {os.path.basename(pfad)}', text_color='lightgreen')
+            self.lbl_status.configure(
+                text=f"{self._tr('Text exported successfully', 'Text erfolgreich exportiert')}: {os.path.basename(pfad)}",
+                text_color='lightgreen'
+            )
 
     def export_text_clean(self):
         text = self.txt_editor.get("0.0", "end").strip()
         if not text:
-            self.lbl_status.configure(text='Kein Text zum Exportieren vorhanden.', text_color='red')
-            messagebox.showwarning("Kein Inhalt", "Es gibt keinen Text zum Speichern.")
+            self.lbl_status.configure(text=self._tr('No text available for export.', 'Kein Text zum Exportieren vorhanden.'), text_color='red')
+            messagebox.showwarning(
+                self._tr("No content", "Kein Inhalt"),
+                self._tr("There is no text to save.", "Es gibt keinen Text zum Speichern.")
+            )
             return
 
         clean_text = self._strip_block_metadata(text)
         if not clean_text:
-            self.lbl_status.configure(text='Nach Bereinigung ist kein Text uebrig.', text_color='red')
-            messagebox.showwarning("Kein Inhalt", "Nach Entfernen der Block-Infos ist kein Text mehr vorhanden.")
+            self.lbl_status.configure(text=self._tr('No text remains after cleanup.', 'Nach Bereinigung ist kein Text uebrig.'), text_color='red')
+            messagebox.showwarning(
+                self._tr("No content", "Kein Inhalt"),
+                self._tr(
+                    "No text remains after removing block headers.",
+                    "Nach Entfernen der Block-Infos ist kein Text mehr vorhanden."
+                )
+            )
             return
 
         default_name = "transcript_clean.txt"
@@ -3254,13 +3435,16 @@ print('ok')
         pfad = filedialog.asksaveasfilename(
             defaultextension=".txt",
             initialfile=default_name,
-            filetypes=[("Textdatei", "*.txt")]
+            filetypes=[(self._tr("Text file", "Textdatei"), "*.txt")]
         )
         if pfad:
             normalized_text = clean_text.replace('\r\n', '\n').replace('\r', '\n')
             with open(pfad, 'w', encoding='utf-8', newline='\n') as f:
                 f.write(normalized_text + "\n")
-            self.lbl_status.configure(text=f'Text ohne Block-Infos exportiert: {os.path.basename(pfad)}', text_color='lightgreen')
+            self.lbl_status.configure(
+                text=f"{self._tr('Text exported without block headers', 'Text ohne Block-Infos exportiert')}: {os.path.basename(pfad)}",
+                text_color='lightgreen'
+            )
 
     # --- LOGIK: DAVINCI EXPORT ---
     def on_export_engine_changed(self, selected_engine):
@@ -3493,7 +3677,13 @@ print('ok')
 
     def start_davinci_export(self):
         if not self.word_timestamps:
-            self.lbl_status.configure(text='Keine Zeitstempel vorhanden. Transkription mit Checkbox wiederholen.', text_color='red')
+            self.lbl_status.configure(
+                text=self._tr(
+                    'No timestamps available. Re-run transcription with timestamp checkbox enabled.',
+                    'Keine Zeitstempel vorhanden. Transkription mit Checkbox wiederholen.'
+                ),
+                text_color='red'
+            )
             return
         try:
             _ = self._get_min_segment_duration()
@@ -3508,18 +3698,24 @@ print('ok')
         if engine == "davinci":
             if action != "cut":
                 self.lbl_status.configure(
-                    text='DaVinci API unterstuetzt hier nur Cut. Fuer Silence/Tone bitte FFmpeg waehlen.',
+                    text=self._tr(
+                        'DaVinci API supports only cut mode here. Use FFmpeg for silence/tone.',
+                        'DaVinci API unterstuetzt hier nur Cut. Fuer Silence/Tone bitte FFmpeg waehlen.'
+                    ),
                     text_color='red'
                 )
                 return
-            self.lbl_status.configure(text='Starte DaVinci Resolve API Export...', text_color='yellow')
+            self.lbl_status.configure(text=self._tr('Starting DaVinci Resolve API export...', 'Starte DaVinci Resolve API Export...'), text_color='yellow')
             threading.Thread(target=self.davinci_thread, daemon=True).start()
             return
 
         if engine == "ffmpeg":
             if action == "cut":
                 self.lbl_status.configure(
-                    text='FFmpeg-Mode ist fuer Silence/Tone gedacht. Fuer Cut bitte DaVinci waehlen.',
+                    text=self._tr(
+                        'FFmpeg mode is intended for silence/tone. Use DaVinci for cut export.',
+                        'FFmpeg-Mode ist fuer Silence/Tone gedacht. Fuer Cut bitte DaVinci waehlen.'
+                    ),
                     text_color='red'
                 )
                 return
@@ -3528,25 +3724,25 @@ print('ok')
             output_path = filedialog.asksaveasfilename(
                 defaultextension=".mp4",
                 initialfile=f"{base_name}_{suffix}.mp4",
-                filetypes=[("MP4 Video", "*.mp4"), ("Alle Dateien", "*.*")]
+                filetypes=[("MP4 Video", "*.mp4"), (self._tr("All files", "Alle Dateien"), "*.*")]
             )
             if not output_path:
-                self.lbl_status.configure(text='FFmpeg Export abgebrochen.', text_color='white')
+                self.lbl_status.configure(text=self._tr('FFmpeg export cancelled.', 'FFmpeg Export abgebrochen.'), text_color='white')
                 return
-            self.lbl_status.configure(text='Starte FFmpeg Export...', text_color='yellow')
+            self.lbl_status.configure(text=self._tr('Starting FFmpeg export...', 'Starte FFmpeg Export...'), text_color='yellow')
             threading.Thread(target=self.ffmpeg_thread, args=(action, output_path), daemon=True).start()
             return
 
-        self.lbl_status.configure(text='Unbekannte Export-Engine.', text_color='red')
+        self.lbl_status.configure(text=self._tr('Unknown export engine.', 'Unbekannte Export-Engine.'), text_color='red')
 
     def ffmpeg_thread(self, action, output_path):
         try:
             deleted_intervals = self._collect_intervals(keep_value=False)
             if not deleted_intervals:
-                raise Exception("Keine geloeschten Wortbereiche vorhanden. Bitte erst Filter anwenden.")
+                raise Exception(self._tr("No deleted word ranges found. Apply a filter first.", "Keine geloeschten Wortbereiche vorhanden. Bitte erst Filter anwenden."))
 
             if not self.video_path or not os.path.exists(self.video_path):
-                raise Exception("Videoquelle nicht gefunden.")
+                raise Exception(self._tr("Video source not found.", "Videoquelle nicht gefunden."))
 
             ffmpeg_check = subprocess.run(
                 ["ffmpeg", "-version"],
@@ -3555,12 +3751,12 @@ print('ok')
                 check=False
             )
             if ffmpeg_check.returncode != 0:
-                raise Exception("FFmpeg wurde nicht gefunden. Bitte FFmpeg installieren und in PATH verfuegbar machen.")
+                raise Exception(self._tr("FFmpeg not found. Please install FFmpeg and add it to PATH.", "FFmpeg wurde nicht gefunden. Bitte FFmpeg installieren und in PATH verfuegbar machen."))
 
             if action == "replace_with_silence":
                 mute_chain = self._build_volume_chain(deleted_intervals, 0)
                 if not mute_chain:
-                    raise Exception("Konnte Silence-Filter nicht erstellen.")
+                    raise Exception(self._tr("Could not create silence filter.", "Konnte Silence-Filter nicht erstellen."))
                 filter_complex = f"[0:a]{mute_chain}[aout]"
                 cmd = [
                     "ffmpeg", "-y",
@@ -3576,13 +3772,13 @@ print('ok')
                 try:
                     tone_freq = int((self.tone_freq_var.get() or "1000").strip())
                 except ValueError:
-                    raise Exception("Tone frequency muss eine Zahl sein (z. B. 1000).")
+                    raise Exception(self._tr("Tone frequency must be numeric (e.g. 1000).", "Tone frequency muss eine Zahl sein (z. B. 1000)."))
                 if tone_freq <= 0:
-                    raise Exception("Tone frequency muss groesser als 0 sein.")
+                    raise Exception(self._tr("Tone frequency must be greater than 0.", "Tone frequency muss groesser als 0 sein."))
 
                 mute_chain = self._build_volume_chain(deleted_intervals, 0)
                 if not mute_chain:
-                    raise Exception("Konnte Tone-Filter nicht erstellen.")
+                    raise Exception(self._tr("Could not create tone filter.", "Konnte Tone-Filter nicht erstellen."))
                 pct = float(self.beep_slider.get()) if hasattr(self, "beep_slider") else 35.0
                 tone_amp = max(0.0, min(1.0, pct / 100.0))
                 tone_expr = self._build_tone_volume_expression(deleted_intervals, tone_amp)
@@ -3607,7 +3803,7 @@ print('ok')
 
             run = subprocess.run(cmd, capture_output=True, text=True, check=False)
             if run.returncode != 0:
-                err = (run.stderr or "Unbekannter FFmpeg Fehler").strip()
+                err = (run.stderr or self._tr("Unknown FFmpeg error", "Unbekannter FFmpeg Fehler")).strip()
                 err_tail = err[-900:]
 
                 def _is_copy_mp4_failure(msg):
@@ -3723,9 +3919,9 @@ print('ok')
     def _davinci_import_media_variants(self, media_pool, video_path):
         """Try dict + string import and path spellings; Resolve is picky on Windows."""
         if not video_path:
-            return [], "Kein video_path gesetzt."
+            return [], self._tr("No video_path set.", "Kein video_path gesetzt.")
         if not os.path.isfile(video_path):
-            return [], f"Datei nicht gefunden: {video_path}"
+            return [], f"{self._tr('File not found', 'Datei nicht gefunden')}: {video_path}"
         abs_path = os.path.normpath(os.path.abspath(video_path))
         variants = []
         for p in (abs_path, abs_path.replace("\\", "/"), os.path.normpath(video_path)):
@@ -3743,7 +3939,7 @@ print('ok')
                         return clips, ""
                 except Exception as ex:
                     last_err = str(ex)
-        return [], (last_err or "ImportMedia lieferte keine Clips.")
+        return [], (last_err or self._tr("ImportMedia returned no clips.", "ImportMedia lieferte keine Clips."))
 
     def _davinci_parse_pixel_dimension(self, raw):
         if raw is None:
@@ -4168,19 +4364,19 @@ print('ok')
             dvr = self._load_davinci_script_module()
             resolve = dvr.scriptapp("Resolve")
             if not resolve:
-                raise Exception("Resolve läuft nicht oder API nicht erreichbar.")
+                raise Exception(self._tr("Resolve is not running or API is not reachable.", "Resolve laeuft nicht oder API nicht erreichbar."))
 
             projectManager = resolve.GetProjectManager()
             project = projectManager.GetCurrentProject()
             if not project:
-                raise Exception("Kein aktives Projekt geöffnet.")
+                raise Exception(self._tr("No active project is open.", "Kein aktives Projekt geoeffnet."))
 
             mediaPool = project.GetMediaPool()
 
             # Same media as Tab 1 — never the temp preprocessing WAV (that path is never stored here).
             resolve_path = os.path.normpath(os.path.abspath(self.video_path))
             if not os.path.isfile(resolve_path):
-                raise Exception(f"Quelldatei nicht gefunden: {resolve_path}")
+                raise Exception(f"{self._tr('Source file not found', 'Quelldatei nicht gefunden')}: {resolve_path}")
 
             imported_clips, import_hint = self._davinci_import_media_variants(
                 mediaPool, resolve_path
@@ -4195,8 +4391,10 @@ print('ok')
             if not target_clip:
                 hint = (import_hint or "")[:220]
                 raise Exception(
-                    "Clip konnte nicht im Media Pool gefunden werden. "
-                    "Datei manuell in den Pool ziehen und erneut versuchen; Pfad und Codec pruefen. "
+                    self._tr(
+                        "Clip not found in Media Pool. Add file manually, then try again. Check path and codec. ",
+                        "Clip konnte nicht im Media Pool gefunden werden. Datei manuell in den Pool ziehen und erneut versuchen; Pfad und Codec pruefen. "
+                    )
                     + (hint if hint else "")
                 )
 
@@ -4207,13 +4405,17 @@ print('ok')
                 pass
             elif not resolve_video and file_video is False:
                 raise Exception(
-                    "Die Quelldatei hat keine Videospur (nur Audio). "
-                    "Transkription aendert die Datei nicht — bitte eine Video-Datei fuer den DaVinci-Export waehlen."
+                    self._tr(
+                        "Source file has no video track (audio only). Please use a video file for DaVinci export.",
+                        "Die Quelldatei hat keine Videospur (nur Audio). Transkription aendert die Datei nicht — bitte eine Video-Datei fuer den DaVinci-Export waehlen."
+                    )
                 )
             elif not resolve_video:
                 raise Exception(
-                    "DaVinci meldet fuer diesen Clip keine Videometadaten (oder ffprobe fehlt). "
-                    "Quelldatei und Media-Pool-Ordner pruefen; ffprobe im PATH verbessert die Erkennung."
+                    self._tr(
+                        "DaVinci shows no video metadata for this clip (or ffprobe is missing). Check source file and Media Pool folder.",
+                        "DaVinci meldet fuer diesen Clip keine Videometadaten (oder ffprobe fehlt). Quelldatei und Media-Pool-Ordner pruefen; ffprobe im PATH verbessert die Erkennung."
+                    )
                 )
 
             fps_str = target_clip.GetClipProperty("FPS")
@@ -4228,8 +4430,10 @@ print('ok')
 
             if not subclips:
                 raise Exception(
-                    "Keine Zeitbereiche zum Behalten (alle Segmente zu kurz oder alle Woerter entfernt). "
-                    "'Min segment duration' in Tab 4 z. B. auf 0.05 senken oder Filter pruefen."
+                    self._tr(
+                        "No keep ranges found. Segments may be too short, or all words were removed. Try lower 'Min segment duration'.",
+                        "Keine Zeitbereiche zum Behalten (alle Segmente zu kurz oder alle Woerter entfernt). 'Min segment duration' in Tab 4 z. B. auf 0.05 senken oder Filter pruefen."
+                    )
                 )
 
             time_suffix = time.strftime("%Y%m%d_%H%M%S")
@@ -4238,10 +4442,10 @@ print('ok')
             )
             if not placed or not timeline_name:
                 raise Exception(
-                    "Keine Video-Spur auf der Timeline nach allen Append-Varianten. "
-                    "Der Export nutzt dieselbe Datei wie in Tab 1 (keine temp. Transkriptions-WAV). "
-                    "Framerate fuer Schnitte: ffprobe wenn verfuegbar, sonst Resolve. "
-                    "HDR/Log kann in der Vorschau dunkel wirken. Alte 'Autocut_*'-Timelines kannst du loeschen."
+                    self._tr(
+                        "No video track on timeline after all append tries. Check file type, fps, and timeline settings.",
+                        "Keine Video-Spur auf der Timeline nach allen Append-Varianten. Der Export nutzt dieselbe Datei wie in Tab 1 (keine temp. Transkriptions-WAV). Framerate fuer Schnitte: ffprobe wenn verfuegbar, sonst Resolve. HDR/Log kann in der Vorschau dunkel wirken. Alte 'Autocut_*'-Timelines kannst du loeschen."
+                    )
                 )
 
             srt_note = ""
@@ -4269,9 +4473,9 @@ print('ok')
             )
             if not preset_used:
                 raise Exception(
-                    "Kein Render-Preset geladen. Versucht: "
+                    self._tr("No render preset loaded. Tried: ", "Kein Render-Preset geladen. Versucht: ")
                     + ", ".join(tried)
-                    + ". Bitte Preset in Resolve anlegen oder Namen im Feld eintragen."
+                    + self._tr(". Create it in Resolve, or type an existing preset name.", ". Bitte Preset in Resolve anlegen oder Namen im Feld eintragen.")
                 )
 
             target_dir, render_name = self._davinci_apply_render_output_settings(
@@ -4287,9 +4491,9 @@ print('ok')
                 time.sleep(0.35)
             if not render_job_id:
                 raise Exception(
-                    "Render-Job konnte nicht erstellt werden. Ausgabeordner: "
+                    self._tr("Could not create render job. Output folder: ", "Render-Job konnte nicht erstellt werden. Ausgabeordner: ")
                     + target_dir
-                    + ". In Resolve Deliver / Render Queue pruefen; Preset oder Zielordner anpassen."
+                    + self._tr(". Check Resolve Render Queue, preset, and output folder.", ". In Resolve Deliver / Render Queue pruefen; Preset oder Zielordner anpassen.")
                 )
             project.StartRendering()
 
@@ -4298,7 +4502,7 @@ print('ok')
             while project.IsRenderingInProgress():
                 if time.time() - start_time > timeout:
                     project.StopRendering()
-                    raise Exception("Render-Timeout überschritten.")
+                    raise Exception(self._tr("Render timeout exceeded.", "Render-Timeout ueberschritten."))
                 time.sleep(2)
 
             if (
@@ -4312,14 +4516,17 @@ print('ok')
                     if self._embed_srt_into_mp4(rendered_mp4, srt_path):
                         srt_note += " + embedded subtitle track"
 
-            ok_msg = f"DaVinci fertig (Preset: {preset_used}, Timeline: {timeline_name}){srt_note}."
+            ok_msg = self._tr(
+                f"DaVinci done (Preset: {preset_used}, Timeline: {timeline_name}){srt_note}.",
+                f"DaVinci fertig (Preset: {preset_used}, Timeline: {timeline_name}){srt_note}."
+            )
             self.after(0, lambda m=ok_msg: self.lbl_status.configure(text=m, text_color="lightgreen"))
 
         except Exception as e:
             err_msg = str(e)
 
             def _report_err(m=err_msg):
-                self.lbl_status.configure(text=f"DaVinci Fehler: {m}", text_color="red")
+                self.lbl_status.configure(text=f"{self._tr('DaVinci error', 'DaVinci Fehler')}: {m}", text_color="red")
                 messagebox.showerror("DaVinci Resolve", m)
 
             self.after(0, _report_err)

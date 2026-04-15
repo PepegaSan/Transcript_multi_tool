@@ -6,7 +6,6 @@ Desktop app for:
 - text export/translation
 - DaVinci Resolve export (cut timeline/render)
 - FFmpeg export (silence/beep replacement)
-- local TTS MP3 export
 
 ## UI
 
@@ -26,6 +25,21 @@ python -m venv .venv
 pip install -r requirements.txt
 python transcript.py
 ```
+
+Windows quick setup:
+
+- Run `install.bat`
+  - choose mode: `Python venv` or `Conda env`
+  - `Python venv`: picks highest compatible Python automatically (3.11 -> 3.10 -> 3.9)
+  - `Conda env`: shows available conda envs; you can select one or create a new one
+  - stores your choice for `start_gui.bat`
+- Run `start_gui.bat` to start the app
+
+## Separate TTS repo
+
+The TTS variant (with Tab 5) is split into a separate repository/workspace:
+
+- `c:\VideoTools\Transcript_multi_tool_tts`
 
 ### Build on Windows with batch scripts
 
